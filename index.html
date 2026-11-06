@@ -2,220 +2,125 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#111827">
-  <title>Control de acceso · QR</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lector QR · Evento solidario</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
-    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#111827;background:#f3f4f6}
-    *{box-sizing:border-box} body{margin:0;min-height:100vh}.wrap{max-width:720px;margin:auto;padding:16px}
-    .card{background:#fff;border-radius:18px;padding:18px;box-shadow:0 8px 28px rgba(0,0,0,.08);margin-bottom:14px}
-    h1{font-size:1.45rem;margin:0 0 6px}.muted{color:#6b7280;margin:0 0 14px}.grid{display:grid;gap:10px}
-    label{font-weight:700;font-size:.92rem} input{width:100%;padding:13px;border:1px solid #d1d5db;border-radius:12px;font-size:16px}
-    button{border:0;border-radius:12px;padding:13px 16px;font-size:16px;font-weight:800;cursor:pointer}
-    .primary{background:#111827;color:white}.secondary{background:#e5e7eb;color:#111827}.danger{background:#fee2e2;color:#991b1b}
-    .actions{display:flex;gap:9px;flex-wrap:wrap}.actions button{flex:1;min-width:150px}
-    #reader{width:100%;overflow:hidden;border-radius:16px;background:#111827;min-height:260px}
-    #result{display:none;text-align:center;padding:24px 14px;border-radius:16px;font-weight:800;font-size:1.15rem}
-    #result.ok{display:block;background:#dcfce7;color:#166534}#result.used{display:block;background:#fef3c7;color:#92400e}
-    #result.bad{display:block;background:#fee2e2;color:#991b1b}.seat{font-size:2rem;margin-top:8px}
-    .status{font-size:.9rem;color:#6b7280;margin-top:8px}.hidden{display:none!important}
-    .hint{font-size:.88rem;color:#6b7280;line-height:1.4}.camera-select{margin-top:10px}
+    body{font-family:Arial,sans-serif;background:#f3f6fa;margin:0;color:#1b2430}
+    main{max-width:720px;margin:20px auto;padding:16px}
+    .card{background:white;border-radius:16px;padding:18px;margin-bottom:16px;border:1px solid #dde5ee}
+    input{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #ccd5df;border-radius:9px;box-sizing:border-box}
+    button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer}
+    .primary{background:#153d6c;color:white}.green{background:#2e9d50;color:white}.secondary{background:#eef3f8}
+    #reader{width:100%}.result{padding:18px;border-radius:12px;font-size:22px;text-align:center;font-weight:800;margin-top:14px}
+    .ok{background:#e6f7eb}.warn{background:#fff3d6}.bad{background:#fde7e7}
   </style>
 </head>
 <body>
-<div class="wrap">
+<main>
   <div class="card">
     <h1>Control de acceso</h1>
-    <p class="muted">Lector QR con cámara en directo</p>
-    <div class="grid">
-      <div>
-        <label for="backend">URL de la aplicación de Apps Script (/exec)</label>
-        <input id="backend" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec">
-      </div>
-      <div>
-        <label for="pin">PIN de administrador</label>
-        <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">
-      </div>
-      <div class="actions">
-        <button class="primary" id="startBtn">📷 Abrir cámara</button>
-        <button class="secondary hidden" id="switchBtn">🔄 Cambiar cámara</button>
-        <button class="danger hidden" id="stopBtn">Detener</button>
-      </div>
-      <div class="hint">La URL se guarda solo en este dispositivo. El PIN se conserva únicamente mientras esta pestaña permanezca abierta.</div>
+    <label>URL de Apps Script (/exec)</label>
+    <input id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec">
+    <label>PIN administrador</label>
+    <input id="pin" type="password">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="secondary" onclick="testConnection()">Probar conexión</button>
+      <button class="green" onclick="startScanner()">📷 Abrir cámara</button>
+      <button class="secondary" onclick="stopScanner()">Detener</button>
     </div>
-  </div>
-
-  <div class="card hidden" id="cameraCard">
-    <div id="reader"></div>
-    <div class="status" id="cameraStatus">Preparando cámara…</div>
+    <div id="connection"></div>
   </div>
 
   <div class="card">
+    <div id="reader"></div>
     <div id="result"></div>
-    <div class="status" id="scanStatus">Listo para escanear.</div>
   </div>
-</div>
+</main>
 
 <script>
-(() => {
-  const backendEl = document.getElementById('backend');
-  const pinEl = document.getElementById('pin');
-  const startBtn = document.getElementById('startBtn');
-  const stopBtn = document.getElementById('stopBtn');
-  const switchBtn = document.getElementById('switchBtn');
-  const cameraCard = document.getElementById('cameraCard');
-  const cameraStatus = document.getElementById('cameraStatus');
-  const scanStatus = document.getElementById('scanStatus');
-  const resultEl = document.getElementById('result');
+let qr=null, lastToken='', lastTime=0;
+const $=id=>document.getElementById(id);
 
-  backendEl.value = localStorage.getItem('ticketBackendUrl') || '';
-  pinEl.value = sessionStorage.getItem('ticketAdminPin') || '';
+window.addEventListener('load',()=>{
+  $('apiUrl').value=localStorage.getItem('solidaria_api_url')||'';
+});
 
-  let qr = null;
-  let cameras = [];
-  let cameraIndex = 0;
-  let busy = false;
-  let lastCode = '';
-  let lastAt = 0;
+function apiBase(){
+  const v=$('apiUrl').value.trim();
+  localStorage.setItem('solidaria_api_url',v);
+  return v.replace(/\?.*$/,'').replace(/\/$/,'');
+}
 
-  function normalizeBackend(url){
-    url = String(url || '').trim();
-    if (!url) return '';
-    url = url.replace(/\/dev(?:\?.*)?$/, '/exec');
-    return url.replace(/\?.*$/, '');
-  }
+function jsonp(params){
+  return new Promise((resolve,reject)=>{
+    const base=apiBase();
+    if(!base) return reject(new Error('Escribe la URL /exec de Apps Script.'));
+    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*100000);
+    const script=document.createElement('script');
+    const timer=setTimeout(()=>{cleanup();reject(new Error('No se pudo contactar con Apps Script.'));},12000);
+    function cleanup(){clearTimeout(timer);delete window[cb];script.remove();}
+    window[cb]=data=>{cleanup();resolve(data);};
+    const qs=new URLSearchParams({...params,callback:cb});
+    script.src=base+'?'+qs.toString();
+    script.onerror=()=>{cleanup();reject(new Error('Error de conexión con Apps Script.'));};
+    document.body.appendChild(script);
+  });
+}
 
-  async function startScanner(){
-    const backend = normalizeBackend(backendEl.value);
-    const pin = pinEl.value.trim();
-    if (!backend || !/\/exec$/.test(backend)) {
-      showResult('bad','Introduce la URL publicada de Apps Script que termina en /exec.'); return;
-    }
-    if (!pin) { showResult('bad','Introduce el PIN de administrador.'); return; }
-    localStorage.setItem('ticketBackendUrl', backend);
-    sessionStorage.setItem('ticketAdminPin', pin);
-    backendEl.value = backend;
+async function testConnection(){
+  try{
+    const r=await jsonp({api:'ping'});
+    $('connection').innerHTML='<div class="result ok">✅ '+escapeHtml(r.message||'Conexión correcta')+'</div>';
+  }catch(e){$('connection').innerHTML='<div class="result bad">❌ '+escapeHtml(e.message)+'</div>';}
+}
 
-    startBtn.disabled = true;
-    resultEl.className=''; resultEl.style.display='none';
-    cameraCard.classList.remove('hidden');
-    cameraStatus.textContent='Solicitando permiso de cámara…';
-
-    try {
-      if (!window.isSecureContext) throw new Error('El lector debe abrirse desde una dirección HTTPS.');
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Este navegador no ofrece acceso compatible a la cámara.');
-
-      cameras = await Html5Qrcode.getCameras();
-      if (!cameras || !cameras.length) throw new Error('No se ha encontrado ninguna cámara.');
-
-      // Preferir una cámara trasera si la etiqueta permite reconocerla.
-      const rear = cameras.findIndex(c => /back|rear|environment|trasera|posterior/i.test(c.label || ''));
-      cameraIndex = rear >= 0 ? rear : Math.max(0, cameras.length - 1);
-      await openCamera(cameras[cameraIndex].id);
-
-      stopBtn.classList.remove('hidden');
-      if (cameras.length > 1) switchBtn.classList.remove('hidden');
-      scanStatus.textContent='Apunta al código QR de la entrada.';
-    } catch(err) {
-      showResult('bad', cameraErrorMessage(err));
-      cameraStatus.textContent='No se pudo iniciar la cámara.';
-      startBtn.disabled=false;
-    }
-  }
-
-  async function openCamera(cameraId){
-    if (qr) { try { if (qr.isScanning) await qr.stop(); } catch(e){} try{ qr.clear(); }catch(e){} }
-    qr = new Html5Qrcode('reader');
+async function startScanner(){
+  try{
+    if(qr) await stopScanner();
+    qr=new Html5Qrcode('reader');
+    const cams=await Html5Qrcode.getCameras();
+    if(!cams.length) throw new Error('No se encontró ninguna cámara.');
+    const preferred=cams.find(c=>/back|rear|environment|trasera/i.test(c.label))||cams[cams.length-1];
     await qr.start(
-      cameraId,
-      { fps: 12, qrbox: (vw,vh) => { const s=Math.floor(Math.min(vw,vh)*0.72); return {width:s,height:s}; }, aspectRatio: 1.333334 },
-      onDecoded,
-      () => {}
+      preferred.id,
+      {fps:10,qrbox:{width:250,height:250}},
+      onScan,
+      ()=>{}
     );
-    cameraStatus.textContent='Cámara activa';
+  }catch(e){
+    $('result').innerHTML='<div class="result bad">❌ '+escapeHtml(e.message)+'</div>';
   }
+}
 
-  async function switchCamera(){
-    if (cameras.length < 2) return;
-    cameraIndex=(cameraIndex+1)%cameras.length;
-    cameraStatus.textContent='Cambiando cámara…';
-    try { await openCamera(cameras[cameraIndex].id); }
-    catch(err){ showResult('bad',cameraErrorMessage(err)); }
+async function stopScanner(){
+  if(qr){
+    try{await qr.stop();}catch(e){}
+    try{await qr.clear();}catch(e){}
+    qr=null;
   }
+}
 
-  async function stopScanner(){
-    if (qr) { try { if (qr.isScanning) await qr.stop(); } catch(e){} try{ qr.clear(); }catch(e){} }
-    qr=null; cameraCard.classList.add('hidden'); stopBtn.classList.add('hidden'); switchBtn.classList.add('hidden');
-    startBtn.disabled=false; cameraStatus.textContent=''; scanStatus.textContent='Lector detenido.';
-  }
+async function onScan(decodedText){
+  const now=Date.now();
+  if(decodedText===lastToken && now-lastTime<3000) return;
+  lastToken=decodedText; lastTime=now;
 
-  function onDecoded(decodedText){
-    const now=Date.now();
-    if (busy) return;
-    if (decodedText===lastCode && now-lastAt<3500) return;
-    lastCode=decodedText; lastAt=now; busy=true;
-    if (navigator.vibrate) navigator.vibrate(60);
-    scanStatus.textContent='Validando entrada…';
-    validateViaJsonp(decodedText).then(res => {
-      if (res.success && res.valid) {
-        showResult('ok','✓ ENTRADA VÁLIDA',res.row,res.seat);
-        tone(880);
-      } else if (res.success && !res.valid) {
-        showResult('used','⚠ ' + (res.message || 'Entrada ya utilizada'),res.row,res.seat);
-        tone(420);
-      } else {
-        showResult('bad','✕ ' + (res.message || 'Entrada no válida'));
-        tone(220);
-      }
-      setTimeout(()=>{ busy=false; scanStatus.textContent='Listo para la siguiente entrada.'; },1200);
-    }).catch(err => {
-      showResult('bad','Error de conexión: ' + err.message);
-      setTimeout(()=>{ busy=false; scanStatus.textContent='Vuelve a intentarlo.'; },1600);
-    });
-  }
+  try{
+    const r=await jsonp({api:'checkin',pin:$('pin').value,token:decodedText});
+    if(!r.valid){
+      show('bad','❌ '+(r.message||'Entrada no válida'));
+    }else if(r.alreadyUsed){
+      show('warn','⚠️ ENTRADA YA UTILIZADA<br>Fila '+r.row+' · Butaca '+r.seat);
+    }else{
+      show('ok','✅ ENTRADA VÁLIDA<br>Fila '+r.row+' · Butaca '+r.seat);
+      if(navigator.vibrate) navigator.vibrate(120);
+    }
+  }catch(e){show('bad','❌ '+e.message);}
+}
 
-  function validateViaJsonp(code){
-    return new Promise((resolve,reject)=>{
-      const backend=normalizeBackend(backendEl.value);
-      const pin=pinEl.value.trim();
-      const cb='__qr_cb_'+Date.now()+'_'+Math.floor(Math.random()*100000);
-      const s=document.createElement('script');
-      let finished=false;
-      const clean=()=>{ if(finished)return; finished=true; clearTimeout(timer); try{delete window[cb]}catch(e){}; s.remove(); };
-      window[cb]=(payload)=>{ clean(); resolve(payload || {}); };
-      const timer=setTimeout(()=>{ clean(); reject(new Error('Tiempo de espera agotado.')); },12000);
-      s.onerror=()=>{ clean(); reject(new Error('No se pudo contactar con Apps Script. Comprueba que el despliegue permite acceso.')); };
-      s.src=backend + '?api=checkin&callback=' + encodeURIComponent(cb) + '&pin=' + encodeURIComponent(pin) + '&code=' + encodeURIComponent(code) + '&_=' + Date.now();
-      document.head.appendChild(s);
-    });
-  }
-
-  function showResult(kind,msg,row,seat){
-    resultEl.className=kind;
-    resultEl.style.display='block';
-    let html='<div>'+escapeHtml(msg)+'</div>';
-    if (row && seat) html+='<div class="seat">Fila '+escapeHtml(row)+' · Butaca '+escapeHtml(seat)+'</div>';
-    resultEl.innerHTML=html;
-  }
-
-  function cameraErrorMessage(err){
-    const m=String(err && (err.message||err) || '');
-    if (/NotAllowed|Permission|denied/i.test(m)) return 'El navegador ha denegado la cámara. Abre esta página directamente en Chrome/Safari por HTTPS y permite la cámara para este sitio.';
-    if (/NotFound|DevicesNotFound/i.test(m)) return 'No se ha encontrado una cámara disponible.';
-    if (/NotReadable|TrackStart/i.test(m)) return 'La cámara está ocupada por otra aplicación. Ciérrala y vuelve a intentarlo.';
-    return m || 'No se pudo iniciar la cámara.';
-  }
-
-  function tone(freq){
-    try { const C=window.AudioContext||window.webkitAudioContext; const c=new C(); const o=c.createOscillator(); const g=c.createGain(); o.frequency.value=freq; g.gain.value=.04; o.connect(g); g.connect(c.destination); o.start(); setTimeout(()=>{o.stop();c.close()},120); } catch(e){}
-  }
-  function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-
-  startBtn.addEventListener('click',startScanner);
-  stopBtn.addEventListener('click',stopScanner);
-  switchBtn.addEventListener('click',switchCamera);
-})();
+function show(cls,html){$('result').innerHTML='<div class="result '+cls+'">'+html+'</div>';}
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 </script>
 </body>
 </html>

@@ -9,27 +9,34 @@
     body{font-family:Arial,sans-serif;background:#f3f6fa;margin:0;color:#1b2430}
     main{max-width:720px;margin:20px auto;padding:16px}
     .card{background:white;border-radius:16px;padding:18px;margin-bottom:16px;border:1px solid #dde5ee}
-    input{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #ccd5df;border-radius:9px;box-sizing:border-box}
-    button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer}
-    .primary{background:#153d6c;color:white}.green{background:#2e9d50;color:white}.secondary{background:#eef3f8}
-    #reader{width:100%}.result{padding:18px;border-radius:12px;font-size:22px;text-align:center;font-weight:800;margin-top:14px}
-    .ok{background:#e6f7eb}.warn{background:#fff3d6}.bad{background:#fde7e7}
+    input{width:100%;padding:13px;margin:6px 0 12px;border:1px solid #ccd5df;border-radius:9px;box-sizing:border-box;font-size:18px}
+    button{border:0;border-radius:10px;padding:14px 18px;font-weight:700;cursor:pointer;font-size:17px}
+    .green{background:#2e9d50;color:white}
+    .secondary{background:#eef3f8;color:#223}
+    #reader{width:100%}
+    .result{padding:18px;border-radius:12px;font-size:22px;text-align:center;font-weight:800;margin-top:14px}
+    .ok{background:#e6f7eb}
+    .warn{background:#fff3d6}
+    .bad{background:#fde7e7}
+    .muted{color:#667085;font-size:14px}
+    .statusline{padding:10px 12px;border-radius:10px;margin:10px 0}
   </style>
 </head>
 <body>
 <main>
   <div class="card">
-    <h1>Control de acceso</h1>
-    <label>URL de Apps Script (/exec)</label>
-    <input id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec">
-    <label>PIN administrador</label>
-    <input id="pin" type="password">
+    <h1 style="margin-top:0">Control de acceso</h1>
+    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div>
+
+    <label><b>PIN de administrador</b></label>
+    <input id="pin" type="password" inputmode="numeric" placeholder="Introduce el PIN">
+
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="secondary" onclick="testConnection()">Probar conexión</button>
       <button class="green" onclick="startScanner()">📷 Abrir cámara</button>
-      <button class="secondary" onclick="stopScanner()">Detener</button>
+      <button class="secondary" onclick="stopScanner()">Detener cámara</button>
     </div>
-    <div id="connection"></div>
+
+    <p class="muted">La URL del sistema ya está configurada. No tienes que copiar ni pegar ninguna dirección.</p>
   </div>
 
   <div class="card">
@@ -39,88 +46,135 @@
 </main>
 
 <script>
-let qr=null, lastToken='', lastTime=0;
-const $=id=>document.getElementById(id);
+const APP_URL = "https://script.google.com/macros/s/AKfycbwmvYCfpMNtANjH7gVoQGo1QrmopABj4t2UKwwcfEs3cR-YuyuMTD9cc9PpNLlDEvlS9A/exec";
+let qr = null;
+let lastToken = "";
+let lastTime = 0;
+const $ = id => document.getElementById(id);
 
-window.addEventListener('load',()=>{
-  $('apiUrl').value=localStorage.getItem('solidaria_api_url')||'';
-});
+window.addEventListener("load", testConnection);
 
-function apiBase(){
-  const v=$('apiUrl').value.trim();
-  localStorage.setItem('solidaria_api_url',v);
-  return v.replace(/\?.*$/,'').replace(/\/$/,'');
-}
+function jsonp(params) {
+  return new Promise((resolve, reject) => {
+    const cb = "cb_" + Date.now() + "_" + Math.floor(Math.random()*100000);
+    const script = document.createElement("script");
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("No se pudo contactar con Apps Script."));
+    }, 12000);
 
-function jsonp(params){
-  return new Promise((resolve,reject)=>{
-    const base=apiBase();
-    if(!base) return reject(new Error('Escribe la URL /exec de Apps Script.'));
-    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*100000);
-    const script=document.createElement('script');
-    const timer=setTimeout(()=>{cleanup();reject(new Error('No se pudo contactar con Apps Script.'));},12000);
-    function cleanup(){clearTimeout(timer);delete window[cb];script.remove();}
-    window[cb]=data=>{cleanup();resolve(data);};
-    const qs=new URLSearchParams({...params,callback:cb});
-    script.src=base+'?'+qs.toString();
-    script.onerror=()=>{cleanup();reject(new Error('Error de conexión con Apps Script.'));};
+    function cleanup() {
+      clearTimeout(timer);
+      try { delete window[cb]; } catch(e) {}
+      script.remove();
+    }
+
+    window[cb] = data => {
+      cleanup();
+      resolve(data);
+    };
+
+    const qs = new URLSearchParams({...params, callback: cb});
+    script.src = APP_URL + "?" + qs.toString();
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Error de conexión con Apps Script."));
+    };
     document.body.appendChild(script);
   });
 }
 
-async function testConnection(){
-  try{
-    const r=await jsonp({api:'ping'});
-    $('connection').innerHTML='<div class="result ok">✅ '+escapeHtml(r.message||'Conexión correcta')+'</div>';
-  }catch(e){$('connection').innerHTML='<div class="result bad">❌ '+escapeHtml(e.message)+'</div>';}
+async function testConnection() {
+  const box = $("serverStatus");
+  box.textContent = "Comprobando conexión con el sistema…";
+  box.className = "statusline muted";
+  try {
+    const r = await jsonp({api:"ping"});
+    if (r && r.ok) {
+      box.textContent = "✅ Sistema conectado y preparado";
+      box.className = "statusline ok";
+    } else {
+      box.textContent = "❌ El sistema respondió, pero no confirmó la conexión";
+      box.className = "statusline bad";
+    }
+  } catch(e) {
+    box.textContent = "❌ " + e.message;
+    box.className = "statusline bad";
+  }
 }
 
-async function startScanner(){
-  try{
-    if(qr) await stopScanner();
-    qr=new Html5Qrcode('reader');
-    const cams=await Html5Qrcode.getCameras();
-    if(!cams.length) throw new Error('No se encontró ninguna cámara.');
-    const preferred=cams.find(c=>/back|rear|environment|trasera/i.test(c.label))||cams[cams.length-1];
+async function startScanner() {
+  const pin = $("pin").value.trim();
+  if (!pin) {
+    $("result").innerHTML = '<div class="result warn">Introduce primero el PIN.</div>';
+    return;
+  }
+
+  try {
+    if (qr) await stopScanner();
+
+    qr = new Html5Qrcode("reader");
+    const cams = await Html5Qrcode.getCameras();
+    if (!cams.length) throw new Error("No se encontró ninguna cámara.");
+
+    const preferred =
+      cams.find(c => /back|rear|environment|trasera/i.test(c.label)) ||
+      cams[cams.length - 1];
+
     await qr.start(
       preferred.id,
-      {fps:10,qrbox:{width:250,height:250}},
+      { fps: 10, qrbox: { width: 250, height: 250 } },
       onScan,
-      ()=>{}
+      () => {}
     );
-  }catch(e){
-    $('result').innerHTML='<div class="result bad">❌ '+escapeHtml(e.message)+'</div>';
+  } catch(e) {
+    $("result").innerHTML = '<div class="result bad">❌ ' + escapeHtml(e.message) + '</div>';
   }
 }
 
-async function stopScanner(){
-  if(qr){
-    try{await qr.stop();}catch(e){}
-    try{await qr.clear();}catch(e){}
-    qr=null;
+async function stopScanner() {
+  if (qr) {
+    try { await qr.stop(); } catch(e) {}
+    try { await qr.clear(); } catch(e) {}
+    qr = null;
   }
 }
 
-async function onScan(decodedText){
-  const now=Date.now();
-  if(decodedText===lastToken && now-lastTime<3000) return;
-  lastToken=decodedText; lastTime=now;
+async function onScan(decodedText) {
+  const now = Date.now();
+  if (decodedText === lastToken && now - lastTime < 3000) return;
+  lastToken = decodedText;
+  lastTime = now;
 
-  try{
-    const r=await jsonp({api:'checkin',pin:$('pin').value,token:decodedText});
-    if(!r.valid){
-      show('bad','❌ '+(r.message||'Entrada no válida'));
-    }else if(r.alreadyUsed){
-      show('warn','⚠️ ENTRADA YA UTILIZADA<br>Fila '+r.row+' · Butaca '+r.seat);
-    }else{
-      show('ok','✅ ENTRADA VÁLIDA<br>Fila '+r.row+' · Butaca '+r.seat);
-      if(navigator.vibrate) navigator.vibrate(120);
+  try {
+    const r = await jsonp({
+      api: "checkin",
+      pin: $("pin").value.trim(),
+      token: decodedText
+    });
+
+    if (!r.valid) {
+      show("bad", "❌ " + (r.message || "Entrada no válida"));
+    } else if (r.alreadyUsed) {
+      show("warn", "⚠️ ENTRADA YA UTILIZADA<br>Fila " + r.row + " · Butaca " + r.seat);
+    } else {
+      show("ok", "✅ ENTRADA VÁLIDA<br>Fila " + r.row + " · Butaca " + r.seat);
+      if (navigator.vibrate) navigator.vibrate(120);
     }
-  }catch(e){show('bad','❌ '+e.message);}
+  } catch(e) {
+    show("bad", "❌ " + e.message);
+  }
 }
 
-function show(cls,html){$('result').innerHTML='<div class="result '+cls+'">'+html+'</div>';}
-function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function show(cls, html) {
+  $("result").innerHTML = '<div class="result ' + cls + '">' + html + '</div>';
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+}
 </script>
 </body>
 </html>

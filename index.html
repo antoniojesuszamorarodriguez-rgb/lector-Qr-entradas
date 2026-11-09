@@ -26,7 +26,7 @@
 <main>
   <div class="card">
     <h1 style="margin-top:0">Control de acceso</h1>
-    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div>
+    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div><div class="muted" style="margin:6px 0 14px">Lector QR v2 · validación robusta</div>
 
     <label><b>PIN de administrador</b></label>
     <input id="pin" type="password" inputmode="numeric" placeholder="Introduce el PIN">
@@ -140,29 +140,80 @@ async function stopScanner() {
   }
 }
 
+function normalizeScannedValue(value) {
+  let token = String(value || '').trim();
+  try {
+    const url = new URL(token);
+    const fromUrl = url.searchParams.get('ticket');
+    if (fromUrl) token = fromUrl;
+  } catch(e) {
+    const m = token.match(/[?&]ticket=([^&#]+)/i);
+    if (m && m[1]) {
+      try { token = decodeURIComponent(m[1]); } catch(e2) { token = m[1]; }
+    }
+  }
+  return token.trim();
+}
+
+function checkinViaFrame(token) {
+  return new Promise((resolve, reject) => {
+    const requestId = 'req_' + Date.now() + '_' + Math.floor(Math.random()*100000);
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('La validación no respondió. Inténtalo de nuevo.'));
+    }, 15000);
+
+    function cleanup() {
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      try { iframe.remove(); } catch(e) {}
+    }
+
+    function onMessage(event) {
+      const d = event.data;
+      if (!d || d.source !== 'solidaria-checkin' || d.requestId !== requestId) return;
+      cleanup();
+      resolve(d.result || {valid:false,message:'Respuesta vacía'});
+    }
+
+    window.addEventListener('message', onMessage);
+
+    const qs = new URLSearchParams({
+      api: 'checkinframe',
+      requestId: requestId,
+      pin: $('pin').value.trim(),
+      token: token
+    });
+
+    iframe.src = APP_URL + '?' + qs.toString();
+    document.body.appendChild(iframe);
+  });
+}
+
 async function onScan(decodedText) {
+  const token = normalizeScannedValue(decodedText);
   const now = Date.now();
-  if (decodedText === lastToken && now - lastTime < 3000) return;
-  lastToken = decodedText;
+
+  if (token === lastToken && now - lastTime < 3000) return;
+  lastToken = token;
   lastTime = now;
 
   try {
-    const r = await jsonp({
-      api: "checkin",
-      pin: $("pin").value.trim(),
-      token: decodedText
-    });
+    const r = await checkinViaFrame(token);
 
     if (!r.valid) {
-      show("bad", "❌ " + (r.message || "Entrada no válida"));
+      show('bad', '❌ ' + (r.message || 'Entrada no válida'));
     } else if (r.alreadyUsed) {
-      show("warn", "⚠️ ENTRADA YA UTILIZADA<br>Fila " + r.row + " · Butaca " + r.seat);
+      show('warn', '⚠️ ENTRADA YA UTILIZADA<br>Fila ' + r.row + ' · Butaca ' + r.seat);
     } else {
-      show("ok", "✅ ENTRADA VÁLIDA<br>Fila " + r.row + " · Butaca " + r.seat);
-      if (navigator.vibrate) navigator.vibrate(120);
+      show('ok', '✅ ENTRADA VÁLIDA<br>Fila ' + r.row + ' · Butaca ' + r.seat);
+      if (navigator.vibrate) navigator.vibrate([120,60,120]);
     }
   } catch(e) {
-    show("bad", "❌ " + e.message);
+    show('bad', '❌ ' + escapeHtml(e.message));
   }
 }
 

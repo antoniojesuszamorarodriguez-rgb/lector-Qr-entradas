@@ -26,7 +26,7 @@
 <main>
   <div class="card">
     <h1 style="margin-top:0">Control de acceso</h1>
-    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div><div class="muted" style="margin:6px 0 14px">Lector QR v2 · validación robusta</div>
+    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div><div class="muted" style="margin:6px 0 14px">Lector QR v3 · validación reforzada</div>
 
     <label><b>PIN de administrador</b></label>
     <input id="pin" type="password" inputmode="numeric" placeholder="Introduce el PIN">
@@ -155,42 +155,75 @@ function normalizeScannedValue(value) {
   return token.trim();
 }
 
-function checkinViaFrame(token) {
-  return new Promise((resolve, reject) => {
-    const requestId = 'req_' + Date.now() + '_' + Math.floor(Math.random()*100000);
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('La validación no respondió. Inténtalo de nuevo.'));
-    }, 15000);
-
-    function cleanup() {
-      clearTimeout(timer);
-      window.removeEventListener('message', onMessage);
-      try { iframe.remove(); } catch(e) {}
-    }
-
-    function onMessage(event) {
-      const d = event.data;
-      if (!d || d.source !== 'solidaria-checkin' || d.requestId !== requestId) return;
-      cleanup();
-      resolve(d.result || {valid:false,message:'Respuesta vacía'});
-    }
-
-    window.addEventListener('message', onMessage);
-
+function fireCheckinWrite(requestId, token) {
+  // Usamos una petición de imagen oculta: el navegador puede enviarla entre dominios
+  // sin necesitar leer la respuesta. Apps Script guarda el resultado temporalmente.
+  return new Promise(resolve => {
+    const img = new Image();
     const qs = new URLSearchParams({
-      api: 'checkinframe',
+      api: 'checkinwrite',
       requestId: requestId,
       pin: $('pin').value.trim(),
-      token: token
+      token: token,
+      t: Date.now().toString()
     });
 
-    iframe.src = APP_URL + '?' + qs.toString();
-    document.body.appendChild(iframe);
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      try { img.remove(); } catch(e) {}
+      resolve();
+    };
+
+    img.style.display = 'none';
+    img.onload = done;
+    img.onerror = done;
+    img.src = APP_URL + '?' + qs.toString();
+    document.body.appendChild(img);
+
+    // Aunque la respuesta no sea una imagen válida, el GET ya habrá llegado al servidor.
+    setTimeout(done, 1800);
   });
+}
+
+async function waitCheckinResult(requestId) {
+  const deadline = Date.now() + 15000;
+
+  while (Date.now() < deadline) {
+    try {
+      const r = await jsonp({
+        api: 'checkinresult',
+        requestId: requestId,
+        t: Date.now().toString()
+      });
+
+      if (r && r.ok && !r.pending) {
+        return r.result || {
+          valid: false,
+          message: 'Respuesta de validación vacía.'
+        };
+      }
+    } catch(e) {
+      // Si una consulta falla de forma transitoria, seguimos intentando.
+    }
+
+    await sleep(650);
+  }
+
+  throw new Error('La validación no respondió. Inténtalo de nuevo.');
+}
+
+async function validateToken(token) {
+  const requestId =
+    'req_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+
+  await fireCheckinWrite(requestId, token);
+  return await waitCheckinResult(requestId);
 }
 
 async function onScan(decodedText) {
@@ -202,7 +235,7 @@ async function onScan(decodedText) {
   lastTime = now;
 
   try {
-    const r = await checkinViaFrame(token);
+    const r = await validateToken(token);
 
     if (!r.valid) {
       show('bad', '❌ ' + (r.message || 'Entrada no válida'));
@@ -213,7 +246,7 @@ async function onScan(decodedText) {
       if (navigator.vibrate) navigator.vibrate([120,60,120]);
     }
   } catch(e) {
-    show('bad', '❌ ' + escapeHtml(e.message));
+    show('bad', '❌ ' + escapeHtml(e.message) + '<br><small>Si persiste, recarga esta página con ?v=4.</small>');
   }
 }
 

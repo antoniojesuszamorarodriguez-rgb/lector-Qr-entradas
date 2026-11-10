@@ -26,7 +26,7 @@
 <main>
   <div class="card">
     <h1 style="margin-top:0">Control de acceso</h1>
-    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div><div class="muted" style="margin:6px 0 14px">Lector QR v3 · validación reforzada</div>
+    <div id="serverStatus" class="statusline muted">Comprobando conexión con el sistema…</div><div class="muted" style="margin:6px 0 14px">Lector QR v4 · transporte fiable</div>
 
     <label><b>PIN de administrador</b></label>
     <input id="pin" type="password" inputmode="numeric" placeholder="Introduce el PIN">
@@ -41,7 +41,7 @@
 
   <div class="card">
     <div id="reader"></div>
-    <div id="result"></div>
+    <div id="result"></div><div style="margin-top:10px;color:#667085;font-size:13px;text-align:center">Acerca el QR hasta que ocupe buena parte del recuadro blanco.</div>
   </div>
 </main>
 
@@ -159,40 +159,51 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function fireCheckinWrite(requestId, token) {
-  // Usamos una petición de imagen oculta: el navegador puede enviarla entre dominios
-  // sin necesitar leer la respuesta. Apps Script guarda el resultado temporalmente.
+function submitCheckinForm(requestId, token) {
   return new Promise(resolve => {
-    const img = new Image();
-    const qs = new URLSearchParams({
+    let frame = document.getElementById('checkinTransportFrame');
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.id = 'checkinTransportFrame';
+      frame.name = 'checkinTransportFrame';
+      frame.style.display = 'none';
+      document.body.appendChild(frame);
+    }
+
+    const form = document.createElement('form');
+    form.method = 'GET';
+    form.action = APP_URL;
+    form.target = 'checkinTransportFrame';
+    form.style.display = 'none';
+
+    const params = {
       api: 'checkinwrite',
       requestId: requestId,
       pin: $('pin').value.trim(),
       token: token,
       t: Date.now().toString()
-    });
-
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      try { img.remove(); } catch(e) {}
-      resolve();
     };
 
-    img.style.display = 'none';
-    img.onload = done;
-    img.onerror = done;
-    img.src = APP_URL + '?' + qs.toString();
-    document.body.appendChild(img);
+    Object.entries(params).forEach(([name, value]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
 
-    // Aunque la respuesta no sea una imagen válida, el GET ya habrá llegado al servidor.
-    setTimeout(done, 1800);
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+
+    // La navegación del iframe es deliberadamente "a ciegas".
+    // El servidor guarda el resultado y después lo recuperamos por JSONP.
+    setTimeout(resolve, 900);
   });
 }
 
 async function waitCheckinResult(requestId) {
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 18000;
 
   while (Date.now() < deadline) {
     try {
@@ -209,10 +220,10 @@ async function waitCheckinResult(requestId) {
         };
       }
     } catch(e) {
-      // Si una consulta falla de forma transitoria, seguimos intentando.
+      // Reintentamos porque sabemos que JSONP funciona con este despliegue.
     }
 
-    await sleep(650);
+    await sleep(500);
   }
 
   throw new Error('La validación no respondió. Inténtalo de nuevo.');
@@ -222,7 +233,9 @@ async function validateToken(token) {
   const requestId =
     'req_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
 
-  await fireCheckinWrite(requestId, token);
+  show('warn', '⏳ QR leído. Validando entrada…');
+
+  await submitCheckinForm(requestId, token);
   return await waitCheckinResult(requestId);
 }
 
